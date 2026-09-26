@@ -9,7 +9,19 @@ Bot de sniping de memecoins pump.fun (Solana), dans la lignée de QTS-Hybrid.
 pip install -r requirements.txt
 ```
 
-## 1. Collecter les données (à laisser tourner 2 à 4 semaines)
+## 1. Clé API PumpPortal (obligatoire pour les trades)
+
+PumpPortal n'envoie les achats/ventes qu'avec une clé API liée à un wallet
+PumpPortal contenant au moins 0,02 SOL.
+
+1. Sur https://pumpportal.fun, crée un « Lightning Wallet » : tu obtiens une clé API
+   et un wallet. Sauvegarde la clé privée affichée en lieu sûr (elle n'est montrée qu'une fois).
+2. Envoie un peu plus de 0,02 SOL sur ce wallet (c'est un wallet dédié, n'y mets rien d'autre).
+3. Copie `.env.example` en `.env` et colle la clé : `PUMPPORTAL_API_KEY=ta_cle`.
+
+Le fichier `.env` est ignoré par git. Sans clé, le collecteur n'enregistre que les créations.
+
+## 2. Collecter les données (à laisser tourner 2 à 4 semaines)
 
 ```bash
 python -m collector.stream_recorder
@@ -20,7 +32,7 @@ créations de tokens, chaque achat/vente des 30 premières minutes de chaque tok
 graduations. Le JSON brut est gardé pour pouvoir re-parser plus tard.
 Ctrl+C pour arrêter ; relancer reprend dans la même base.
 
-## 2. Lancer le backtest
+## 3. Lancer le backtest
 
 ```bash
 python run_backtest.py                           # sur les données collectées

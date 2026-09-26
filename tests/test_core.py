@@ -6,7 +6,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from backtest.replay_engine import ReplayEngine
-from collector.stream_recorder import parse_message
+from collector.stream_recorder import build_url, parse_message
 from database.events import Event, connect, insert_event, iter_events
 from strategies.snipe.strategie_snipe import Position, SnipeStrategy
 from strategies.snipe.token_state import TokenState
@@ -120,3 +120,8 @@ def test_daily_loss_limit_blocks_new_entries():
     eng.now_ms = 0
     eng.daily_pnl["1970-01-01"] = -eng.risk["daily_loss_limit_sol"]
     assert not eng._can_open()
+
+
+def test_api_key_is_added_to_url():
+    assert build_url("wss://pumpportal.fun/api/data", "") == "wss://pumpportal.fun/api/data"
+    assert build_url("wss://pumpportal.fun/api/data", "abc") == "wss://pumpportal.fun/api/data?api-key=abc"

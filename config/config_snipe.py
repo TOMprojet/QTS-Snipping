@@ -5,6 +5,9 @@
 # --- COLLECTEUR (phase 1) ---
 params_collector = {
     "ws_url": "wss://pumpportal.fun/api/data",
+    # PumpPortal exige une clé API (liée à un wallet PumpPortal avec >= 0,02 SOL)
+    # pour suivre les trades. La clé se met dans .env, jamais dans le code.
+    "api_key_env": "PUMPPORTAL_API_KEY",
     "db_path": "data/pumpfun_events.db",
     # Durée pendant laquelle on suit les trades d'un token après sa création.
     # Au-delà, on se désabonne pour limiter la charge (la plupart meurent avant).

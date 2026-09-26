@@ -5,7 +5,8 @@ Phase 1 : enregistre le flux temps réel pump.fun (via PumpPortal) dans SQLite.
 - pour chaque nouveau token, s'abonne à ses trades pendant `track_minutes`,
 - stocke chaque événement (+ le JSON brut, pour pouvoir re-parser plus tard).
 
-Lecture seule : aucun wallet, aucune clé, aucun ordre.
+Lecture seule : aucun ordre n'est envoyé. La seule clé utilisée est la clé API
+PumpPortal (fichier .env), nécessaire pour recevoir les trades.
 
 Lancement :  python -m collector.stream_recorder
 Arrêt :      Ctrl+C (les événements en attente sont enregistrés avant de quitter)
@@ -35,6 +36,20 @@ def _f(value) -> Optional[float]:
         return None
 
 
+def load_api_key(env_name: str) -> str:
+    """Lit la clé API PumpPortal depuis l'environnement ou le fichier .env."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+    except ImportError:
+        pass
+    return os.getenv(env_name, "").strip()
+
+
+def build_url(base_url: str, api_key: str) -> str:
+    return f"{base_url}?api-key={api_key}" if api_key else base_url
+
+
 def parse_message(data: dict, recv_ms: int) -> Optional[Event]:
     """Transforme un message PumpPortal en Event. None si ce n'est pas un événement."""
     tx_type = data.get("txType")
@@ -62,6 +77,9 @@ def parse_message(data: dict, recv_ms: int) -> Optional[Event]:
 class StreamRecorder:
     def __init__(self, params: dict = params_collector):
         self.p = params
+        self.api_key = load_api_key(params["api_key_env"])
+        # Sans clé API, PumpPortal refuse l'abonnement aux trades
+        self.trades_enabled = bool(self.api_key)
         self.conn = connect(params["db_path"])
         self.tracked: dict = {}          # mint -> ms de début de suivi
         self.pending_subs: list = []
@@ -72,7 +90,14 @@ class StreamRecorder:
         ev = parse_message(data, now_ms())
         if ev is None:
             if "message" in data:
-                logger.info("PumpPortal", reply=data.get("message"))
+                reply = str(data.get("message"))
+                if "API key" in reply and self.trades_enabled:
+                    self.trades_enabled = False
+                    logger.error("PumpPortal refuse la clé API : les trades ne sont PAS enregistrés. "
+                                 "Vérifie PUMPPORTAL_API_KEY dans .env et le solde du wallet (>= 0,02 SOL).",
+                                 reply=reply)
+                elif "API key" not in reply:
+                    logger.info("PumpPortal", reply=reply)
             return
         insert_event(self.conn, ev, raw=data)
         self.stats[ev.tx_type] = self.stats.get(ev.tx_type, 0) + 1
@@ -95,11 +120,13 @@ class StreamRecorder:
             await asyncio.sleep(self.p["subscribe_batch_seconds"])
             if self.pending_subs:
                 keys, self.pending_subs = self.pending_subs, []
-                await ws.send(json.dumps({"method": "subscribeTokenTrade", "keys": keys}))
+                if self.trades_enabled:
+                    await ws.send(json.dumps({"method": "subscribeTokenTrade", "keys": keys}))
             cutoff = now_ms() - self.p["track_minutes"] * 60_000
             expired = [m for m, t in self.tracked.items() if t < cutoff]
             if expired:
-                await ws.send(json.dumps({"method": "unsubscribeTokenTrade", "keys": expired}))
+                if self.trades_enabled:
+                    await ws.send(json.dumps({"method": "unsubscribeTokenTrade", "keys": expired}))
                 for m in expired:
                     del self.tracked[m]
             self.flush()
@@ -110,8 +137,9 @@ class StreamRecorder:
     async def run_once(self) -> None:
         import websockets  # import tardif : le backtest n'en a pas besoin
 
-        async with websockets.connect(self.p["ws_url"], ping_interval=20, max_size=None) as ws:
-            logger.info("Connecté à PumpPortal", url=self.p["ws_url"])
+        url = build_url(self.p["ws_url"], self.api_key)
+        async with websockets.connect(url, ping_interval=20, max_size=None) as ws:
+            logger.info("Connecté à PumpPortal", url=self.p["ws_url"], cle_api=bool(self.api_key))
             await ws.send(json.dumps({"method": "subscribeNewToken"}))
             await ws.send(json.dumps({"method": "subscribeMigration"}))
             # Après une reconnexion, on reprend le suivi des tokens encore actifs
@@ -145,6 +173,9 @@ class StreamRecorder:
 
 def main() -> None:
     recorder = StreamRecorder()
+    if not recorder.api_key:
+        logger.warning("Pas de PUMPPORTAL_API_KEY dans .env : seules les CRÉATIONS de tokens seront "
+                       "enregistrées, pas les trades. Le backtest a besoin des trades (voir README).")
     logger.info("Démarrage du collecteur", db=params_collector["db_path"], **summary(recorder.conn))
     try:
         asyncio.run(recorder.run_forever())
